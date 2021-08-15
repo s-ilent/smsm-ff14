@@ -1,2 +1,69 @@
-# smsm-ff14
-A messy shader modification for Final Fantasy XIV.
+# Silent's Messy Shader Mod - for FF14
+
+A messy shader modification for Final Fantasy 14.
+
+Unlike the popular Reshade/GShade shader mods, this uses 3DMigoto to *replace* the game's own shaders with custom ones. This allows for much much higher fidelity when it comes to colour control and even the ability to improve on normally impossible to touch aspects of the game's graphics!
+
+Because this works through shader replacement, it has a low performance impact and does not need to be updated through patches unless an affected shader is changed.
+
+## Features
+
+* **Filmic tonemapping** replaces the game's internal colour processing algorithm with one which is standard in modern games. It brings out the fine details of the art in FF14 while removing the dreaded "grey haze" many Reshade presets seek to destroy, without crushing any details. Because it works in HDR space, it can even show details that weren't visible before.
+* **Tweaked reflections** to be less jaggy and more blurry, by applying a simple scattering filter to hide the sampling steps. 
+* **Softer bloom** that more closely matches the intended look of the game when running it at higher resolutions like 4k. 
+* **Sharper sun shafts** using dithered sampling, which avoids the stepped look of the original.
+* **Smoother radial blur** using dithered sampling, which avoids the stepped look of the original. 
+* **Less banding** with a dithered output, reducing the banding visible when looking at the skybox. 
+* **Bokeh depth of field** in cutscenes and /gpose mode. 
+
+## Installation
+
+Copy the contents of the repository to the /game directory where ffxiv_dx11.exe sits. i.e.
+
+`C:\Program Files\FINAL FANTASY XIV - A Realm Reborn\game\`
+
+The game MUST be set to DX11 in the launcher. 
+<!--
+This relies on 3DMigoto to do the hard work.
+
+1. Download and install 3DMigoto from https://github.com/bo3b/3Dmigoto/releases.
+2. 3DMigoto comes with 3 folders. Extract the contents of the x64 folder next to ffxiv_dx11.exe. i.e.
+
+`C:\Program Files\FINAL FANTASY XIV - A Realm Reborn\game\`
+
+The game MUST be set to DX11 in the launcher. 
+
+3. Finally, place the ShaderFixes folder from this repo next to ffxiv_dx11.exe, overwriting the folder created by 3DMigoto.
+-->
+
+### Uninstallation
+
+Delete d3d11.dll, nvapi64.dll, d3dcompiler_46.dll, and the ShaderFixes folder.
+
+## Notes
+
+### General
+Shaders are currently provided in binary format. This is faster, but no customisation is available. 
+This also means there is no source code. I would like to make source code available in the future if people are interested in seeing it. However, as the title of this mod suggests, it is messy and I'd prefer to clean things up a little before making them public. 
+
+### Compatibility
+While this mod is compatible with Reshade/GShade, some tools may raise warnings due to having multiple DirectX injection tools active at once. You should generally be safe to ignore these and proceed. 
+
+### Tonemapping and lighting
+Some scenes may look odd due to the lighting parameters used by the game. 
+
+I've done rigorous testing and these scenes are few and far between. 
+
+It's not possible to fix them, but workarounds might be possible. Feel free to report them if you see them. 
+
+### Depth of field
+In FF14, depth of field is compured at quarter resolution and upscaled to the main screen resolution. The depth buffer provided to depth of field in this case is also quarter resolution. 
+
+As such, when depth of field is shallow, it will appear similar to the original depth of field, as it would look noticeably lower-resolution otherwise. 
+
+Under certain conditions - almost entirely when using /gpose - you might see big jagged edges around objects when the depth of field is set to custom parameters. This seems unavoidable due to the nature of how FF14 does depth of field - remember, quarter resolution - so please tweak the parameters if this happens.
+
+## License
+This mod is licensed under the MIT license where applicable.
+
+This does not apply to the portions of the mod part of the 3DMigoto software. 3DMigoto is licensed under GPLv3, and you can find the source code here: https://github.com/bo3b/3Dmigoto
