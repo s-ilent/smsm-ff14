@@ -1,10 +1,14 @@
 # Silent's Messy Shader Mod - for FF14
 
+![Preview Image](https://user-images.githubusercontent.com/16026653/129494572-8f3d45e8-4edd-4421-b7eb-ffc21b47f349.jpg)
+
 A messy shader modification for Final Fantasy 14.
 
 Unlike the popular Reshade/GShade shader mods, this uses 3DMigoto to *replace* the game's own shaders with custom ones. This allows for much much higher fidelity when it comes to colour control and even the ability to improve on normally impossible to touch aspects of the game's graphics!
 
 Because this works through shader replacement, it has a low performance impact and does not need to be updated through patches unless an affected shader is changed.
+
+### [Download it here.](https://github.com/s-ilent/smsm-ff14/archive/refs/heads/main.zip)
 
 ## Features
 
@@ -15,6 +19,10 @@ Because this works through shader replacement, it has a low performance impact a
 * **Smoother radial blur** using dithered sampling, which avoids the stepped look of the original. 
 * **Less banding** with a dithered output, reducing the banding visible when looking at the skybox. 
 * **Bokeh depth of field** in cutscenes and /gpose mode. 
+* **Not an overlay** - won't overlap the game's UI, won't render through it, won't have artifacts around UI elements. 
+
+![See, UI works!](https://user-images.githubusercontent.com/16026653/129494753-8958c9af-2891-4785-aabd-eef6958c7c8d.jpg)
+
 
 ## Installation
 
@@ -39,6 +47,17 @@ The game MUST be set to DX11 in the launcher.
 ### Uninstallation
 
 Delete d3d11.dll, nvapi64.dll, d3dcompiler_46.dll, and the ShaderFixes folder.
+
+## Screenshots
+
+![Dusk and dawn's warm tones are expanded.](https://user-images.githubusercontent.com/16026653/129495100-bf11aa72-7c96-4327-b637-4e6782bb8e91.jpg)
+
+![2.0 areas look expecially nice with the new colour grading.](https://user-images.githubusercontent.com/16026653/129494848-084b538a-8ea7-4fff-aa39-5fe608a72b2f.jpg)
+
+![Sun shafts and moon shafts look more stable now.](https://user-images.githubusercontent.com/16026653/129495045-53050e6f-524a-43d3-859c-0e9cbec3bb22.jpg)
+
+![3.0 areas also get nice boosts.](https://user-images.githubusercontent.com/16026653/129495129-9d3b0a89-2a73-4a86-a6b9-9c6db85c084b.jpg)
+
 
 ## Notes
 
