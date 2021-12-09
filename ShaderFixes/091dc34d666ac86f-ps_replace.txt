@@ -1,0 +1,413 @@
+// Blurs the reflection depending on how reflective the material is. Updated for 4.1!
+// ---- Created with 3Dmigoto v1.2.61 on Mon Oct 16 01:16:39 2017
+
+cbuffer g_CameraParameter : register(b0)
+{
+
+  struct
+  {
+    row_major float3x4 m_ViewMatrix;
+    row_major float3x4 m_InverseViewMatrix;
+    row_major float4x4 m_ViewProjectionMatrix;
+    row_major float4x4 m_InverseViewProjectionMatrix;
+    row_major float4x4 m_InverseProjectionMatrix;
+    row_major float4x4 m_ProjectionMatrix;
+    row_major float4x4 m_MainViewToProjectionMatrix;
+    float3 m_EyePosition;
+    float3 m_LookAtVector;
+  } g_CameraParameter : packoffset(c0);
+
+}
+
+cbuffer g_ReflectionParameter : register(b2)
+{
+
+  struct
+  {
+    float4 m_PixelSize;
+    float4 m_FadeDistance;
+  } g_ReflectionParameter : packoffset(c0);
+
+}
+
+//SamplerState g_SamplerReflectionBlur.S_s : register(s0);
+//SamplerState g_SamplerReflection.S_s : register(s1);
+//SamplerState g_SamplerViewPosition.S_s : register(s2);
+//SamplerState g_SamplerReflectionGBuffer.S_s : register(s3);
+//Texture2D<float4> g_SamplerReflectionBlur.T : register(t0);
+//Texture2D<float4> g_SamplerReflection.T : register(t1);
+//Texture2D<float4> g_SamplerViewPosition.T : register(t2);
+//Texture2D<float4> g_SamplerReflectionGBuffer.T : register(t3);
+
+struct texSampler {
+  SamplerState S_s;
+  Texture2D<float4> T;
+};
+
+texSampler g_SamplerReflectionBlur;
+texSampler g_SamplerReflection;
+texSampler g_SamplerViewPosition;
+texSampler g_SamplerReflectionGBuffer;
+
+// 3Dmigoto declarations
+#define cmp -
+
+#include "Common.h"
+
+void main( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0,
+  float4 v2 : TEXCOORD1,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1,r2,r3,r4,r5;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  float2 dither = 0.0;
+
+  // When v0 is inverted, the dither spread is smoother near top edges, which looks better on floors.
+  dither = r2_intensity(-v0.xy); 
+
+  // Giving the dither a cubic distribution looks nicer for some reason
+  dither = smoothstep(0, 1, dither); 
+
+  // Remap the dither to -1 to 1 range.
+  dither=mad(dither,2.0f,-1.0f);
+  dither=sign(dither)*(1.0f-sqrt(1.0f-abs(dither)));
+
+  // Make the spread of the dithering 6 pixels ( in reflection buffer space )
+  float2 ditherRange = g_ReflectionParameter.m_PixelSize.xy;
+  ditherRange *= 6;
+
+  dither *= ditherRange;
+
+  r0.xyz = g_SamplerViewPosition.T.Sample(g_SamplerViewPosition.S_s, v2.xy).xyz;
+  r0.w = dot(-r0.xyz, -r0.xyz);
+  r0.w = rsqrt(r0.w);
+  r1.xyz = -r0.xyz * r0.www;
+  r2.xyzw = g_SamplerReflectionBlur.T.Sample(g_SamplerReflectionBlur.S_s, v2.xy).xyzw;
+  r2.xyz = float3(-0.5,-0.5,-0.5) + r2.xyz;
+  r0.w = dot(r2.xyz, r2.xyz);
+  r0.w = rsqrt(r0.w);
+  r2.xyz = r2.xyz * r0.www;
+
+  //v2.xy += dither;
+
+  r0.w = dot(-r1.xyz, r2.xyz);
+  r0.w = r0.w + r0.w;
+  r1.xyz = r2.xyz * -r0.www + -r1.xyz;
+  r0.w = dot(r1.xyz, r1.xyz);
+  r0.w = rsqrt(r0.w);
+  r2.xyz = r1.xyz * r0.www;
+  r1.xyz = r1.xyz * r0.www + r0.xyz;
+  r1.w = 1;
+  r3.x = dot(g_CameraParameter.m_ProjectionMatrix._m00_m01_m02_m03, r1.xyzw);
+  r3.y = dot(g_CameraParameter.m_ProjectionMatrix._m10_m11_m12_m13, r1.xyzw);
+  r0.w = dot(g_CameraParameter.m_ProjectionMatrix._m30_m31_m32_m33, r1.xyzw);
+  r1.xyz = r3.xyx / r0.www;
+  r1.xyz = r1.xyz * float3(0.5,-0.5,0.5) + float3(0.5,0.5,0.5);
+  r1.xyz = -v2.xyx + r1.xyz;
+  r0.w = dot(r1.yz, r1.yz);
+  r0.w = rsqrt(r0.w);
+  r1.xyz = r1.xyz * r0.www;
+
+  // I think this section determines exactly how many steps to take for the fragment
+  // and the width of those steps.
+  r3.xy = float2(0.0109999999,0.0109999999) * r1.xy;
+  r0.w = r1.z * 0.605000019 + v2.x;
+  r1.z = cmp(r0.w < 0);
+  r3.zw = -v2.xy / r3.xy;
+  r3.zw = ceil(r3.zw);
+  r1.z = r1.z ? r3.z : 55;
+  r0.w = cmp(1 < r0.w);
+  r4.xy = float2(1,1) + -v2.xy;
+  r3.xz = r4.xy / r3.xy;
+  r3.xz = ceil(r3.xz);
+  r0.w = r0.w ? r3.x : r1.z;
+  r1.z = r3.y * r0.w + v2.y;
+  r1.w = cmp(r1.z < 0);
+  r0.w = r1.w ? r3.w : r0.w;
+  r1.z = cmp(1 < r1.z);
+  r0.w = r1.z ? r3.z : r0.w;
+  r0.w = max(0, r0.w);
+  r3.y = min(55, r0.w);
+  r3.z = 0;
+
+  // Apply the dither before sampling the main reflection texture.
+  // r1.xy corresponds to the axial blur amount (or something like that)
+  // so multiplying the dither by r1 causes it to spread further along the blur axis.
+  v2.xy += dither * r1.xy;
+
+  r1.zw = v2.xy;
+  r4.x = 0;
+  r3.x = 1;
+  while (true) {
+    r0.w = cmp(r3.x >= r3.y);
+    if (r0.w != 0) break;
+    r4.zw = r1.xy * float2(0.0109999999,0.0109999999) + r1.zw;
+    r5.xyz = g_SamplerViewPosition.T.SampleLevel(g_SamplerViewPosition.S_s, r4.zw, 0).xyz;
+    r0.w = cmp(r0.z < r5.z);
+    if (r0.w != 0) {
+      r3.x = 1 + r3.x;
+      r1.zw = r4.zw;
+      continue;
+    }
+    r5.xyz = r5.xyz + -r0.xyz;
+    r0.w = dot(r5.xyz, r5.xyz);
+    r0.w = rsqrt(r0.w);
+    r5.xyz = r5.xyz * r0.www;
+    r0.w = dot(r2.xyz, r5.xyz);
+    r0.w = cmp(r0.w < 0.999000013);
+    if (r0.w != 0) {
+      r3.x = 1 + r3.x;
+      r1.zw = r4.zw;
+      continue;
+    }
+    r5.xyz = g_SamplerReflectionGBuffer.T.SampleLevel(g_SamplerReflectionGBuffer.S_s, r4.zw, 0).xyz;
+    r5.xyz = float3(-0.5,-0.5,-0.5) + r5.xyz;
+    r0.w = dot(r5.xyz, r5.xyz);
+    r0.w = rsqrt(r0.w);
+    r5.xyz = r5.xyz * r0.www;
+    r0.w = dot(r5.xyz, r2.xyz);
+    r0.w = cmp(r0.w < 0);
+    r4.xy = r0.ww ? r3.xy : r3.zx;
+    r3.x = 1 + r4.y;
+    r1.zw = r4.zw;
+  }
+  r0.x = cmp(0 < r4.x);
+  r0.x = r0.x ? 1.000000 : 0;
+  r0.yw = float2(-0.5,-0.5) + r1.zw;
+  r0.y = max(abs(r0.y), abs(r0.w));
+  r0.y = min(0.5, r0.y);
+  r0.y = -0.449999988 + r0.y;
+  r0.y = max(0, r0.y);
+  r0.y = -r0.y * 20 + 1;
+  r0.x = r0.x * r0.y;
+  r0.y = -30 + r4.x;
+  r0.y = max(0, r0.y);
+  r0.y = -r0.y * 0.0333333351 + 1;
+  r0.x = r0.x * r0.y;
+  r0.y = -g_ReflectionParameter.m_FadeDistance.x + -r0.z;
+  r0.y = saturate(g_ReflectionParameter.m_FadeDistance.z * r0.y);
+  r0.y = 1 + -r0.y;
+  r0.x = r0.x * r0.y;
+  r0.x = r0.x * r2.w;
+  r1.xyzw = g_SamplerReflection.T.Sample(g_SamplerReflection.S_s, r1.zw).xyzw;
+  r0.xyzw = r1.xyzw * r0.xxxx;
+  r1.x = saturate(5 * r0.w);
+  r1.x = 1 + -r1.x;
+  r1.y = dot(r0.xyz, float3(0.298909992,0.586610019,0.114480004));
+  r1.y = g_ReflectionParameter.m_FadeDistance.w * -r1.y;
+  r1.x = r1.y * r1.x;
+  r1.x = 1.44269502 * r1.x;
+  r1.x = exp2(r1.x);
+  o0.xyz = r1.xxx * r0.xyz;
+  o0.w = r0.w;
+  return;
+}
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// Generated by Microsoft (R) HLSL Shader Compiler 9.29.952.3111
+//
+//   using 3Dmigoto v1.2.61 on Mon Oct 16 01:16:39 2017
+//
+//
+// Buffer Definitions: 
+//
+// cbuffer g_CameraParameter
+// {
+//
+//   struct CameraParameter
+//   {
+//       
+//       row_major float3x4 m_ViewMatrix;// Offset:    0
+//       row_major float3x4 m_InverseViewMatrix;// Offset:   48
+//       row_major float4x4 m_ViewProjectionMatrix;// Offset:   96
+//       row_major float4x4 m_InverseViewProjectionMatrix;// Offset:  160
+//       row_major float4x4 m_InverseProjectionMatrix;// Offset:  224
+//       row_major float4x4 m_ProjectionMatrix;// Offset:  288
+//       row_major float4x4 m_MainViewToProjectionMatrix;// Offset:  352
+//       float3 m_EyePosition;          // Offset:  416
+//       float3 m_LookAtVector;         // Offset:  432
+//
+//   } g_CameraParameter;               // Offset:    0 Size:   444
+//
+// }
+//
+// cbuffer g_ReflectionParameter
+// {
+//
+//   struct ReflectionParameter
+//   {
+//       
+//       float4 m_PixelSize;            // Offset:    0
+//       float4 m_FadeDistance;         // Offset:   16
+//
+//   } g_ReflectionParameter;           // Offset:    0 Size:    32
+//
+// }
+//
+//
+// Resource Bindings:
+//
+// Name                                 Type  Format         Dim Slot Elements
+// ------------------------------ ---------- ------- ----------- ---- --------
+// g_SamplerReflectionBlur.S         sampler      NA          NA    0        1
+// g_SamplerReflection.S             sampler      NA          NA    1        1
+// g_SamplerViewPosition.S           sampler      NA          NA    2        1
+// g_SamplerReflectionGBuffer.S      sampler      NA          NA    3        1
+// g_SamplerReflectionBlur.T         texture  float4          2d    0        1
+// g_SamplerReflection.T             texture  float4          2d    1        1
+// g_SamplerViewPosition.T           texture  float4          2d    2        1
+// g_SamplerReflectionGBuffer.T      texture  float4          2d    3        1
+// g_CameraParameter                 cbuffer      NA          NA    0        1
+// g_ReflectionParameter             cbuffer      NA          NA    2        1
+//
+//
+//
+// Input signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_POSITION              0   xyzw        0      POS   float       
+// TEXCOORD                 0   xyzw        1     NONE   float       
+// TEXCOORD                 1   xyzw        2     NONE   float   xy  
+//
+//
+// Output signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_TARGET                0   xyzw        0   TARGET   float   xyzw
+//
+ps_5_0
+dcl_globalFlags refactoringAllowed
+dcl_constantbuffer cb0[22], immediateIndexed
+dcl_constantbuffer cb2[2], immediateIndexed
+dcl_sampler s0, mode_default
+dcl_sampler s1, mode_default
+dcl_sampler s2, mode_default
+dcl_sampler s3, mode_default
+dcl_resource_texture2d (float,float,float,float) t0
+dcl_resource_texture2d (float,float,float,float) t1
+dcl_resource_texture2d (float,float,float,float) t2
+dcl_resource_texture2d (float,float,float,float) t3
+dcl_input_ps linear v2.xy
+dcl_output o0.xyzw
+dcl_temps 6
+sample_indexable(texture2d)(float,float,float,float) r0.xyz, v2.xyxx, t2.xyzw, s2
+dp3 r0.w, -r0.xyzx, -r0.xyzx
+rsq r0.w, r0.w
+mul r1.xyz, r0.wwww, -r0.xyzx
+sample_indexable(texture2d)(float,float,float,float) r2.xyzw, v2.xyxx, t0.xyzw, s0
+add r2.xyz, r2.xyzx, l(-0.500000, -0.500000, -0.500000, 0.000000)
+dp3 r0.w, r2.xyzx, r2.xyzx
+rsq r0.w, r0.w
+mul r2.xyz, r0.wwww, r2.xyzx
+dp3 r0.w, -r1.xyzx, r2.xyzx
+add r0.w, r0.w, r0.w
+mad r1.xyz, r2.xyzx, -r0.wwww, -r1.xyzx
+dp3 r0.w, r1.xyzx, r1.xyzx
+rsq r0.w, r0.w
+mul r2.xyz, r0.wwww, r1.xyzx
+mad r1.xyz, r1.xyzx, r0.wwww, r0.xyzx
+mov r1.w, l(1.000000)
+dp4 r3.x, cb0[18].xyzw, r1.xyzw
+dp4 r3.y, cb0[19].xyzw, r1.xyzw
+dp4 r0.w, cb0[21].xyzw, r1.xyzw
+div r1.xyz, r3.xyxx, r0.wwww
+mad r1.xyz, r1.xyzx, l(0.500000, -0.500000, 0.500000, 0.000000), l(0.500000, 0.500000, 0.500000, 0.000000)
+add r1.xyz, r1.xyzx, -v2.xyxx
+dp2 r0.w, r1.yzyy, r1.yzyy
+rsq r0.w, r0.w
+mul r1.xyz, r0.wwww, r1.xyzx
+mul r3.xy, r1.xyxx, l(0.011000, 0.011000, 0.000000, 0.000000)
+mad r0.w, r1.z, l(0.605000), v2.x
+lt r1.z, r0.w, l(0.000000)
+div r3.zw, -v2.xxxy, r3.xxxy
+round_pi r3.zw, r3.zzzw
+movc r1.z, r1.z, r3.z, l(55.000000)
+lt r0.w, l(1.000000), r0.w
+add r4.xy, -v2.xyxx, l(1.000000, 1.000000, 0.000000, 0.000000)
+div r3.xz, r4.xxyx, r3.xxyx
+round_pi r3.xz, r3.xxzx
+movc r0.w, r0.w, r3.x, r1.z
+mad r1.z, r3.y, r0.w, v2.y
+lt r1.w, r1.z, l(0.000000)
+movc r0.w, r1.w, r3.w, r0.w
+lt r1.z, l(1.000000), r1.z
+movc r0.w, r1.z, r3.z, r0.w
+max r0.w, r0.w, l(0.000000)
+min r3.y, r0.w, l(55.000000)
+mov r3.z, l(0)
+mov r1.zw, v2.xxxy
+mov r4.x, l(0)
+mov r3.x, l(1.000000)
+loop 
+  ge r0.w, r3.x, r3.y
+  breakc_nz r0.w
+  mad r4.zw, r1.xxxy, l(0.000000, 0.000000, 0.011000, 0.011000), r1.zzzw
+  sample_l_indexable(texture2d)(float,float,float,float) r5.xyz, r4.zwzz, t2.xyzw, s2, l(0.000000)
+  lt r0.w, r0.z, r5.z
+  if_nz r0.w
+    add r3.x, r3.x, l(1.000000)
+    mov r1.zw, r4.zzzw
+    continue 
+  endif 
+  add r5.xyz, -r0.xyzx, r5.xyzx
+  dp3 r0.w, r5.xyzx, r5.xyzx
+  rsq r0.w, r0.w
+  mul r5.xyz, r0.wwww, r5.xyzx
+  dp3 r0.w, r2.xyzx, r5.xyzx
+  lt r0.w, r0.w, l(0.999000)
+  if_nz r0.w
+    add r3.x, r3.x, l(1.000000)
+    mov r1.zw, r4.zzzw
+    continue 
+  endif 
+  sample_l_indexable(texture2d)(float,float,float,float) r5.xyz, r4.zwzz, t3.xyzw, s3, l(0.000000)
+  add r5.xyz, r5.xyzx, l(-0.500000, -0.500000, -0.500000, 0.000000)
+  dp3 r0.w, r5.xyzx, r5.xyzx
+  rsq r0.w, r0.w
+  mul r5.xyz, r0.wwww, r5.xyzx
+  dp3 r0.w, r5.xyzx, r2.xyzx
+  lt r0.w, r0.w, l(0.000000)
+  movc r4.xy, r0.wwww, r3.xyxx, r3.zxzz
+  add r3.x, r4.y, l(1.000000)
+  mov r1.zw, r4.zzzw
+endloop 
+lt r0.x, l(0.000000), r4.x
+and r0.x, r0.x, l(0x3f800000)
+add r0.yw, r1.zzzw, l(0.000000, -0.500000, 0.000000, -0.500000)
+max r0.y, |r0.w|, |r0.y|
+min r0.y, r0.y, l(0.500000)
+add r0.y, r0.y, l(-0.450000)
+max r0.y, r0.y, l(0.000000)
+mad r0.y, -r0.y, l(20.000000), l(1.000000)
+mul r0.x, r0.y, r0.x
+add r0.y, r4.x, l(-30.000000)
+max r0.y, r0.y, l(0.000000)
+mad r0.y, -r0.y, l(0.0333333351), l(1.000000)
+mul r0.x, r0.y, r0.x
+add r0.y, -r0.z, -cb2[1].x
+mul_sat r0.y, r0.y, cb2[1].z
+add r0.y, -r0.y, l(1.000000)
+mul r0.x, r0.y, r0.x
+mul r0.x, r2.w, r0.x
+sample_indexable(texture2d)(float,float,float,float) r1.xyzw, r1.zwzz, t1.xyzw, s1
+mul r0.xyzw, r0.xxxx, r1.xyzw
+mul_sat r1.x, r0.w, l(5.000000)
+add r1.x, -r1.x, l(1.000000)
+dp3 r1.y, r0.xyzx, l(0.298910, 0.586610, 0.114480, 0.000000)
+mul r1.y, -r1.y, cb2[1].w
+mul r1.x, r1.x, r1.y
+mul r1.x, r1.x, l(1.442695)
+exp r1.x, r1.x
+mul o0.xyz, r0.xyzx, r1.xxxx
+mov o0.w, r0.w
+ret 
+// Approximately 111 instruction slots used
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/

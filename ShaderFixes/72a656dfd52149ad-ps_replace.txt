@@ -1,0 +1,320 @@
+// tonemapping.shcd?
+// ---- Created with 3Dmigoto v1.2.31 on Wed Mar 02 07:50:27 2016 
+
+
+cbuffer cCommonTexParam : register(b0)
+{
+  float4 cCommonTexParam : packoffset(c0);
+}
+
+cbuffer cToneMapParam : register(b1)
+{
+  float4 cToneMapParam[2] : packoffset(c0);
+}
+
+//SamplerState sInput.S_s : register(s0);
+//SamplerState sToneMap.S_s : register(s1);
+//Texture2D<float4> sInput.T : register(t0);
+//Texture2D<float4> sToneMap.T : register(t1);
+
+struct Tex2D
+{
+  SamplerState S_s;
+  Texture2D<float4> T;
+};
+
+Tex2D sInput;
+Tex2D sToneMap;
+
+
+// 3Dmigoto declarations
+#define cmp -
+Texture1D<float4> IniParams : register(t120);
+Texture2D<float4> StereoParams : register(t125);
+
+#include "Configuration.h"
+ 
+  #define DEBUG_MODE 0
+  // 1: Shows 3 coloured bars with current shader variables. 
+  // 2: Shows the 3 values seperated into RGB components. Note: They are affected by the game's colour grading!
+
+  // Note: This is all guesswork.
+  // White point : r1.xyz           based on the cToneMapParam[1] values and a LUT
+  // cToneMapParam[1]               x is black level, y is white level, z is mid point
+  // Adaptation : cCommonTexParam   overbright, overdark, ???
+
+// Helper functions
+
+#include "Common.h"
+
+#include "Tonemapping.h"
+
+// Main effect
+void main (
+#if (TONEMAP_VANILLA==0)
+  float4 v0 : SV_POSITION0,
+  float2 v1 : TEXCOORD0,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 color,luma,tonemap;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  color = sInput.T.Sample(sInput.S_s, v1.xy);
+
+  // Passthrough alpha
+  o0.w = color.w;
+
+  // Clamp to zero because some VFX create negatives.
+  color.xyz = max(float3(0,0,0), color.xyz);
+
+  // Pre-tonemap levels adjustment. Probably some kind of exposure mapping. 
+  // Seems to cause problems for our purposes. 
+  //color.xyz = cCommonTexParam.yyy * color.xyz; 
+
+  #if USE_Power
+    color.xyz = color.xyz * color.xyz;  
+  #endif
+
+  // Derive a nice white point from the tonemapping and scene parameters.
+  float whitePt = cToneMapParam[1].x + cToneMapParam[1].y; 
+  whitePt /= cCommonTexParam.yyy;
+  whitePt += 32.0/256.0;
+
+  // Color tinting in HDR, to preserve whites
+  #if COLORTONE
+    static float colDim = dot(colorToneAmount, 0.333);
+    //color.xyz *= 1-colDim;
+    //color.xyz *= 1+ colorToneAmount;
+    color.xyz *= colorToneAmount + 1-colDim;
+  #endif
+
+  #if PSATURATION
+  {
+      #if (PSATURATION==1)
+      //r0.rgb = lerp(r0.www, r0.xyz, saturationAmount);
+      float luma = dot(color.xyz, lumaCoef);  
+      color.rgb = lerp(luma, color.xyz, saturationAmount);
+
+      #elif (PSATURATION==2)
+      float luma = max3(color.r, color.g, color.b);
+      color.rgb = lerp(luma, color.xyz, saturationAmount);
+      
+      #elif (PSATURATION==3)
+      float luma = min(min(color.r, color.g), color.b);
+      color.rgb = lerp(luma, color.xyz, saturationAmount);
+      #endif
+  }
+  #endif
+
+  #if USE_Power
+    color.xyz = sqrt(color.xyz);
+  #endif 
+
+  #if TONEMAP_Hejl
+    color.rgb = Tonemap_Hejl2015(color.rgb, whitePt);
+  #endif
+
+  #if TONEMAP_U2
+    {
+    float A = 1.00;      // shoulder strength
+    float B = 0.30;      // linear strength
+    float C = 0.30;      // linear angle
+    float D = 0.50;      // toe strength
+    float E = 0.02;      // toe numerator
+    float F = 0.30;      // toe denominator
+      /*
+    float A = 1.425;      // shoulder strength
+    float B = 0.6;      // linear strength
+    float C = 0.08333;      // linear angle
+    float D = 0.20;      // toe strength
+    float E = 0.02;      // toe numerator
+    float F = 0.2455;      // toe denominator
+    */
+    //float W = 11.2;      // linear white point
+    float W = whitePt;     // linear white point
+    color.rgb = Tonemap_Filmic(color.rgb, W, A, B, C, D, E, F);
+    }
+  #endif
+
+  #if TONEMAP_ACES
+    color.rgb = ACESFilm(color.rgb, whitePt);
+  #endif
+
+  #if TONEMAP_EVILS
+    //color.rgb = EVILS(color.rgb*whitePt);
+
+    float contrast = 1.6f;
+    float shoulder = 1.0f;
+    float midGreyIn = 0.18f;
+    float midGreyOut = 0.227f;
+    float hdrMax = 64.0f;
+
+    float W = genericTonemap(whitePt, contrast, shoulder, midGreyIn, midGreyOut, hdrMax);
+    color.r = genericTonemap(color.r, contrast, shoulder, midGreyIn, midGreyOut, hdrMax);
+    color.g = genericTonemap(color.g, contrast, shoulder, midGreyIn, midGreyOut, hdrMax);
+    color.b = genericTonemap(color.b, contrast, shoulder, midGreyIn, midGreyOut, hdrMax);
+
+    color /= W;
+  #endif
+
+  #if TONEMAP_ACESSP
+    color.rgb = RgbAcesSdrSrgb(color.rgb);
+    color.rgb = (color*color)/RgbAcesSdrSrgb(whitePt);
+  #endif
+
+  #if TONEMAP_Luminance
+    color.rgb = Tonemap_Hejl2015L(color, whitePt);
+  #endif
+
+    // Experimental based on GPUOpen presentation
+  #if TONEMAP_Luminance2
+    color.rgb = colourCrosstalkEffect(color.rgb, whitePt);
+  #endif
+
+  #if TONEMAP_Xponential
+    float L = ( 1.0 - exp( -color.rgb/cCommonTexParam.z ) );
+    color.rgb *= L;
+  #endif
+
+  {
+    float3 contra = float3(ExpContrast(color.r), ExpContrast(color.g), ExpContrast(color.b));
+    //float3 contra = color*color;
+    //color.xyz = lerp(color, contra, color);
+  }
+
+  o0.xyz = (color.xyz);
+}
+
+void orig_dec ( 
+#endif // TONEMAP_VANILLA
+  float4 v0 : SV_POSITION0,
+  float2 v1 : TEXCOORD0,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 color,luma,adapt;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  color = sInput.T.Sample(sInput.S_s, v1.xy);
+  o0.w = color.w;
+
+  color.xyz = max(float3(0,0,0), color.xyz);   // Some VFX produce negatives
+  color.xyz = cCommonTexParam.yyy * color.xyz; // Auto-exposure
+  color.xyz = color.xyz * color.xyz;           // Convert to gamma-space
+
+  // Luminance, in gamma space 
+  luma = dot(color.xyz, float3(0.298909992f,0.586610019f,0.114480004f)); 
+  luma = saturate(cToneMapParam[0].z * luma);
+
+  adapt.x = luma * (cToneMapParam[1].y + -cToneMapParam[1].x) + cToneMapParam[1].x;
+  adapt.y = 0.5;
+  adapt.xyz = sToneMap.T.Sample(sToneMap.S_s, adapt.xy).xyz;
+  color.xyz = adapt.xyz * color.xyz; 
+  
+  o0.xyz = sqrt(color.xyz);                    // Convert to linear-space
+}
+
+void orig_o (
+  float4 v0 : SV_POSITION0,
+  float2 v1 : TEXCOORD0,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+
+  r0.xyz = max(float3(0,0,0), r0.xyz);
+  o0.w = r0.w;
+  r0.xyz = cCommonTexParam.yyy * r0.xyz;
+  r0.xyz = r0.xyz * r0.xyz;
+  r0.w = dot(r0.xyz, float3(0.298909992,0.586610019,0.114480004));
+  r0.w = saturate(cToneMapParam[0].z * r0.w);
+  r1.x = cToneMapParam[1].y + -cToneMapParam[1].x;
+  r1.x = r0.w * r1.x + cToneMapParam[1].x;
+  r1.y = 0.5;
+  r1.xyz = sToneMap.T.Sample(sToneMap.S_s, r1.xy).xyz;
+  r0.xyz = r1.xyz * r0.xyz; 
+  o0.xyz = sqrt(r0.xyz);
+}
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// Generated by Microsoft (R) HLSL Shader Compiler 9.29.952.3111
+//
+//   using 3Dmigoto v1.2.31 on Wed Mar 02 07:50:27 2016
+//
+//
+// Buffer Definitions: 
+//
+// cbuffer cCommonTexParam
+// {
+//
+//   float4 cCommonTexParam;            // Offset:    0 Size:    16
+//
+// }
+//
+// cbuffer cToneMapParam
+// {
+//
+//   float4 cToneMapParam[2];           // Offset:    0 Size:    32
+//
+// }
+//
+//
+// Resource Bindings:
+//
+// Name                                 Type  Format         Dim Slot Elements
+// ------------------------------ ---------- ------- ----------- ---- --------
+// sInput.S                          sampler      NA          NA    0        1
+// sToneMap.S                        sampler      NA          NA    1        1
+// sInput.T                          texture  float4          2d    0        1
+// sToneMap.T                        texture  float4          2d    1        1
+// cCommonTexParam                   cbuffer      NA          NA    0        1
+// cToneMapParam                     cbuffer      NA          NA    1        1
+//
+//
+//
+// Input signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_POSITION              0   xyzw        0      POS   float       
+// TEXCOORD                 0   xy          1     NONE   float   xy  
+//
+//
+// Output signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_TARGET                0   xyzw        0   TARGET   float   xyzw
+//
+ps_5_0
+dcl_globalFlags refactoringAllowed
+dcl_constantbuffer cb0[1], immediateIndexed
+dcl_constantbuffer cb1[2], immediateIndexed
+dcl_sampler s0, mode_default
+dcl_sampler s1, mode_default
+dcl_resource_texture2d (float,float,float,float) t0
+dcl_resource_texture2d (float,float,float,float) t1
+dcl_input_ps linear v1.xy
+dcl_output o0.xyzw
+dcl_temps 2
+sample_indexable(texture2d)(float,float,float,float) r0.xyzw, v1.xyxx, t0.xyzw, s0
+max r0.xyz, r0.xyzx, l(0.000000, 0.000000, 0.000000, 0.000000)
+mov o0.w, r0.w
+mul r0.xyz, r0.xyzx, cb0[0].yyyy
+mul r0.xyz, r0.xyzx, r0.xyzx
+dp3 r0.w, r0.xyzx, l(0.298910, 0.586610, 0.114480, 0.000000)
+mul_sat r0.w, r0.w, cb1[0].z
+add r1.x, -cb1[1].x, cb1[1].y
+mad r1.x, r0.w, r1.x, cb1[1].x
+mov r1.y, l(0.500000)
+sample_indexable(texture2d)(float,float,float,float) r1.xyz, r1.xyxx, t1.xyzw, s1
+mul r0.xyz, r0.xyzx, r1.xyzx
+sqrt o0.xyz, r0.xyzx
+ret 
+// Approximately 14 instruction slots used
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+       

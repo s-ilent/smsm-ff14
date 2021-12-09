@@ -1,0 +1,338 @@
+// Blurs the reflection depending on how reflective the material is
+// ---- Created with 3Dmigoto v1.2.40 on Fri Jul 29 19:24:31 2016
+
+SamplerState g_SamplerReflectionBlurS_s : register(s0);
+SamplerState g_SamplerReflectionS_s : register(s1);
+Texture2D<float4> g_SamplerReflectionBlurT : register(t0);
+Texture2D<float4> g_SamplerReflectionT : register(t1);
+
+// Extra
+
+cbuffer g_ReflectionParameter : register(b1)
+{
+
+  struct
+  {
+    float4 m_BlurRenderTargetPixelSize;
+    float4 m_GBufferPixelSize;
+    float4 m_ViewPositionPixelSize;
+    float4 m_FogColor;
+    float4 m_Misc;
+    float4 m_Weight0;
+    float4 m_Weight1;
+  } g_ReflectionParameter : packoffset(c0);
+
+}
+
+// 3Dmigoto declarations
+#define cmp -
+
+#include "Common.h"
+
+void main( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0,
+  float4 v2 : TEXCOORD1,
+  float4 v3 : TEXCOORD2,
+  float4 v4 : TEXCOORD3,
+  float4 v5 : TEXCOORD4,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  r0.x = g_SamplerReflectionT.Sample(g_SamplerReflectionS_s, v1.xy).w;  // Reflections for different directions
+  r0.x = 1 + -r0.x;
+  r0.x = r0.x * 0.5 + 0.75;
+  r1.xyzw = v2.xyzw * r0.xxxx + v1.xyxy;
+  r0.xyzw = -v2.xyzw * r0.xxxx + v1.xyxy;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.xy).xyzw;
+  r1.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.zw).xyzw;
+  r3.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.xy).xyzw;
+  r0.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.zw).xyzw;
+  r0.xyzw = r1.xyzw + r0.xyzw;
+  r1.xyzw = r3.xyzw + r2.xyzw;
+  r1.xyzw = float4(0.135904998,0.135904998,0.135904998,0.135904998) * r1.xyzw;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  r1.xyzw = r2.xyzw * float4(0.685389996,0.685389996,0.685389996,0.685389996) + r1.xyzw;
+  o0.xyzw = r0.xyzw * float4(0.0214000009,0.0214000009,0.0214000009,0.0214000009) + r1.xyzw;
+  return;
+}
+
+void oldB( 
+  float4 v0 : SV_POSITION0, // not used
+  float4 v1 : TEXCOORD0,    // Actual coord
+  float4 v2 : TEXCOORD1,    // Offset
+  float4 v3 : TEXCOORD2,    // Not used, bigger offset?
+  float4 v4 : TEXCOORD3,    // Not used, 0?
+  float4 v5 : TEXCOORD4,    // Not used, unknown
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  float4 pixelSize = g_ReflectionParameter.m_BlurRenderTargetPixelSize; // 
+  // x: ??? Too large
+  // y: Not enough?
+  // z: Changes based on camera position
+  // w: Probably 0
+
+  float dither;
+  float ditherRange;
+
+  if (false) {
+  dither = interleaved_gradient(-v0.yx);
+  ////float dither = remap_tri(nrand(v0.xy));
+  ditherRange = 1.0;//0.5;
+  //float dither = GetBayerFromCoordLevel(v0.xy); // Testing only
+  //float ditherRange = pixelSize.y/4;
+  dither = Cubic(dither);
+  }
+  if (false) {
+  dither = ALUdither(v0.xy);
+  ditherRange = 1.0;//0.5;
+  }
+
+  dither = ALUdither(v0.yx);
+  ditherRange = pixelSize.x*0.25;//0.5;
+
+  //dither = lerp(-ditherRange, ditherRange, dither);
+
+  dither=mad(dither,2.0f,-1.0f);
+  dither=sign(dither)*(1.0f-sqrt(1.0f-abs(dither)));
+  dither *= ditherRange;
+
+  // This texture contains reflective objects, like polished wood and metal. 
+  // It'll be used to modify the amount of blur in the sampling.
+  r0.x = g_SamplerReflectionT.Sample(g_SamplerReflectionS_s, v1.xy).w;  
+  // Inverse the texture so that 1 is rough surfaces
+  r0.x = 1 + -r0.x;
+  // Start at 75% blur and increase depending on roughness
+  r0.x = r0.x * 0.5 + 0.75;
+  //r0.x = Cubic(r0.x);
+
+  //r0.x *= dither;
+  dither *= r0.x;
+
+  static float blurCoef1 = 0.135904998f; // r1 blur
+  static float blurCoef2 = 0.685389996f; // Non-blurred
+  static float blurCoef3 = 0.0214000009f;// r0 blur
+  // Note: The totals of these coefficients is 84%
+
+  // Add dithering to the main offset.
+  // This makes everything blurrier, covering up artifacts. 
+  v1 = lerp(v1, v1+v2, dither); 
+  //v1 = lerp(v1, v1+v2+v2, dither); 
+  //v1 = lerp(v1, v1+v3, dither);  // Really blurry!
+  //v1 = lerp(v1+v2, v1+v3, dither); 
+
+  //v2 = lerp(v2, v3, dither);
+
+  // Create the offsets used when sampling the reflection blur for the object type blur.
+  r1.xyzw =  v2.xyzw * r0.xxxx + v1.xyxy; // First offset
+  r0.xyzw = -v2.xyzw * r0.xxxx + v1.xyxy; // Second offset
+
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.xy).xyzw;
+  r1.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.zw).xyzw;
+  r3.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.xy).xyzw;
+  r0.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.zw).xyzw;
+
+  r0.xyzw = r1.xyzw + r0.xyzw; // Wider blur
+  r1.xyzw = r3.xyzw + r2.xyzw; // Less wide blur
+
+  #if 1 // Original
+  r1 *= blurCoef1;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw; // No blur
+  r1 += r2 * blurCoef2;
+  o0 = mad(r0, blurCoef3, r1); // r0 * blurCoef3 + r1;
+
+  #elif 0 // Testing only!
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  o0 = r2+r0+r1;
+
+  #elif 0 // Testing only!
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  o0 = r2*2;
+
+  #elif 0 // Testing only!
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  o0 = float4(r0.x, r1.y, r0.z, r1.w);
+  // Green inside (r1), red outside (r0)
+
+  #else // Equal weight
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  o0 = (r2+r0+r1)/3;
+
+  #endif
+  // Blurring the reflections makes them appear less strong. 
+  // Because the sums don't equal 100% above, it should be alright to boost them
+  o0 *= 1.1;
+  //o0.xyz = dither;
+  return;
+}
+
+void oldA( 
+  float4 v0 : SV_POSITION0, // not used
+  float4 v1 : TEXCOORD0,    // Actual coord
+  float4 v2 : TEXCOORD1,    // Offset
+  float4 v3 : TEXCOORD2,    // Not used, bigger offset
+  float4 v4 : TEXCOORD3,
+  float4 v5 : TEXCOORD4,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  float dither = interleaved_gradient(-v0.yx);
+
+  r0.x = g_SamplerReflectionT.Sample(g_SamplerReflectionS_s, v1.xy).w;  // G-buffer?
+  r0.x = 1 + -r0.x;
+  r0.x = r0.x * 0.5 + 0.75;
+
+  // Modification: Scatter the offset based on a dithering pattern.
+  // I can't stand how the normal version looks so blocky. 
+  //v2 = lerp(v2, v3, dither); // Not bad, but only affects initial blur
+
+  v1 = lerp(v1, v1+v2+v2, dither); // Wow, this works really well!
+
+  v2 = lerp(v2, 0, dither); // Less spread, but nicer appearance
+
+  // r0.x is brighter in highly reflective places, so this multiplies the offset
+  // by the amount of reflectivity?
+  r1.xyzw =  v2.xyzw * r0.xxxx + v1.xyxy;
+  r0.xyzw = -v2.xyzw * r0.xxxx + v1.xyxy;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.xy).xyzw;
+  r1.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.zw).xyzw;
+  r3.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.xy).xyzw;
+  r0.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.zw).xyzw;
+  r0.xyzw = r1.xyzw + r0.xyzw; // Wider blur
+  r1.xyzw = r3.xyzw + r2.xyzw; // Less wide blur
+  r1.xyzw = float4(0.135904998,0.135904998,0.135904998,0.135904998) * r1.xyzw;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  r1.xyzw = r2.xyzw * float4(0.685389996,0.685389996,0.685389996,0.685389996) + r1.xyzw;
+  o0.xyzw = r0.xyzw * float4(0.0214000009,0.0214000009,0.0214000009,0.0214000009) + r1.xyzw;
+  //o0.xyzw = r0.xyzw + r1.xyzw;
+  return;
+}
+
+// debugging
+void test( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0,
+  float4 v2 : TEXCOORD1,
+  float4 v3 : TEXCOORD2,
+  float4 v4 : TEXCOORD3,
+  float4 v5 : TEXCOORD4,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  r0.x = g_SamplerReflectionT.Sample(g_SamplerReflectionS_s, v1.xy).w;  // Reflections for different directions
+  r0.x = 1 + -r0.x;
+  r0.x = r0.x * 0.5 + 0.75;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  o0.xyzw = r2.xyzw;
+  return;
+}
+
+void orig( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0,
+  float4 v2 : TEXCOORD1,
+  float4 v3 : TEXCOORD2,
+  float4 v4 : TEXCOORD3,
+  float4 v5 : TEXCOORD4,
+  out float4 o0 : SV_TARGET0)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  r0.x = g_SamplerReflectionT.Sample(g_SamplerReflectionS_s, v1.xy).w;  // Reflections for different directions
+  r0.x = 1 + -r0.x;
+  r0.x = r0.x * 0.5 + 0.75;
+  r1.xyzw = v2.xyzw * r0.xxxx + v1.xyxy;
+  r0.xyzw = -v2.xyzw * r0.xxxx + v1.xyxy;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.xy).xyzw;
+  r1.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r1.zw).xyzw;
+  r3.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.xy).xyzw;
+  r0.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, r0.zw).xyzw;
+  r0.xyzw = r1.xyzw + r0.xyzw;
+  r1.xyzw = r3.xyzw + r2.xyzw;
+  r1.xyzw = float4(0.135904998,0.135904998,0.135904998,0.135904998) * r1.xyzw;
+  r2.xyzw = g_SamplerReflectionBlurT.Sample(g_SamplerReflectionBlurS_s, v1.xy).xyzw;
+  r1.xyzw = r2.xyzw * float4(0.685389996,0.685389996,0.685389996,0.685389996) + r1.xyzw;
+  o0.xyzw = r0.xyzw * float4(0.0214000009,0.0214000009,0.0214000009,0.0214000009) + r1.xyzw;
+  return;
+}
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// Generated by Microsoft (R) HLSL Shader Compiler 9.29.952.3111
+//
+//   using 3Dmigoto v1.2.40 on Fri Jul 29 19:24:31 2016
+//
+//
+// Resource Bindings:
+//
+// Name                                 Type  Format         Dim Slot Elements
+// ------------------------------ ---------- ------- ----------- ---- --------
+// g_SamplerReflectionBlur.S         sampler      NA          NA    0        1
+// g_SamplerReflection.S             sampler      NA          NA    1        1
+// g_SamplerReflectionBlur.T         texture  float4          2d    0        1
+// g_SamplerReflection.T             texture  float4          2d    1        1
+//
+//
+//
+// Input signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_POSITION              0   xyzw        0      POS   float       
+// TEXCOORD                 0   xyzw        1     NONE   float   xy  
+// TEXCOORD                 1   xyzw        2     NONE   float   xyzw
+// TEXCOORD                 2   xyzw        3     NONE   float       
+// TEXCOORD                 3   xyzw        4     NONE   float       
+// TEXCOORD                 4   xyzw        5     NONE   float       
+//
+//
+// Output signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_TARGET                0   xyzw        0   TARGET   float   xyzw
+//
+ps_5_0
+dcl_globalFlags refactoringAllowed
+dcl_sampler s0, mode_default
+dcl_sampler s1, mode_default
+dcl_resource_texture2d (float,float,float,float) t0
+dcl_resource_texture2d (float,float,float,float) t1
+dcl_input_ps linear v1.xy
+dcl_input_ps linear v2.xyzw
+dcl_output o0.xyzw
+dcl_temps 4
+sample_indexable(texture2d)(float,float,float,float) r0.x, v1.xyxx, t1.wxyz, s1
+add r0.x, -r0.x, l(1.000000)
+mad r0.x, r0.x, l(0.500000), l(0.750000)
+mad r1.xyzw, v2.xyzw, r0.xxxx, v1.xyxy
+mad r0.xyzw, -v2.xyzw, r0.xxxx, v1.xyxy
+sample_indexable(texture2d)(float,float,float,float) r2.xyzw, r1.xyxx, t0.xyzw, s0
+sample_indexable(texture2d)(float,float,float,float) r1.xyzw, r1.zwzz, t0.xyzw, s0
+sample_indexable(texture2d)(float,float,float,float) r3.xyzw, r0.xyxx, t0.xyzw, s0
+sample_indexable(texture2d)(float,float,float,float) r0.xyzw, r0.zwzz, t0.xyzw, s0
+add r0.xyzw, r0.xyzw, r1.xyzw
+add r1.xyzw, r2.xyzw, r3.xyzw
+mul r1.xyzw, r1.xyzw, l(0.135905, 0.135905, 0.135905, 0.135905)
+sample_indexable(texture2d)(float,float,float,float) r2.xyzw, v1.xyxx, t0.xyzw, s0
+mad r1.xyzw, r2.xyzw, l(0.685390, 0.685390, 0.685390, 0.685390), r1.xyzw
+mad o0.xyzw, r0.xyzw, l(0.021400, 0.021400, 0.021400, 0.021400), r1.xyzw
+ret 
+// Approximately 16 instruction slots used
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/

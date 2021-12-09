@@ -15,6 +15,7 @@ Because this works through shader replacement, it has a low performance impact a
 * **Smoother radial blur** using dithered sampling, which avoids the stepped look of the original. 
 * **Less banding** with a dithered output, reducing the banding visible when looking at the skybox. 
 * **Bokeh depth of field** in cutscenes and /gpose mode. 
+* **Screenspace shadows** based off surface normal maps, adding subtle shadows to objects based on the ridges on their surface.
 
 ## Installation
 
@@ -43,8 +44,7 @@ Delete d3d11.dll, nvapi64.dll, d3dcompiler_46.dll, and the ShaderFixes folder.
 ## Notes
 
 ### General
-Shaders are currently provided in binary format. This is faster, but no customisation is available. 
-This also means there is no source code. I would like to make source code available in the future if people are interested in seeing it. However, as the title of this mod suggests, it is messy and I'd prefer to clean things up a little before making them public. 
+Shaders are currently provided in binary and source format. As the title of this mod suggests, the source code is messy. I wrote a lot of this while still learning about shader programming, sorry!
 
 ### Compatibility
 While this mod is compatible with Reshade/GShade, some tools may raise warnings due to having multiple DirectX injection tools active at once. You should generally be safe to ignore these and proceed. 

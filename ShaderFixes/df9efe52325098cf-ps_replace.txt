@@ -1,0 +1,487 @@
+// Calculate and apply main light + fake specular
+// ---- Created with 3Dmigoto v1.3.11 on Sat Aug 21 05:22:44 2021
+
+cbuffer g_CommonParameter : register(b0)
+{
+
+  struct
+  {
+    float4 m_RenderTarget;
+    float4 m_Viewport;
+    float4 m_Misc;
+    float4 m_Misc2;
+  } g_CommonParameter : packoffset(c0);
+
+}
+
+cbuffer g_LightParam : register(b1)
+{
+
+  struct
+  {
+    float3 m_Position;
+    float3 m_Direction;
+    float3 m_DiffuseColor;
+    float3 m_SpecularColor;
+    float4 m_Attenuation;
+    float4 m_ClipMin;
+    float3 m_ClipMax;
+    float3 m_FadeScale;
+    float4 m_ShadowTexMask;
+    float4 m_PlaneRayDirection;
+    row_major float3x4 m_PlaneInversMatrix;
+    row_major float3x4 m_WorldViewInversMatrix;
+    row_major float4x4 m_LightMapMatrix;
+    row_major float4x4 m_WorldViewProjectionMatrix;
+    float4 m_HeightAttenuationPlane;
+    float4 m_HeightAttenuation;
+  } g_LightParam : packoffset(c0);
+
+}
+
+cbuffer g_FakeSpecularParam : register(b2)
+{
+
+  struct
+  {
+    float3 m_Direction;
+    float4 m_Color;
+  } g_FakeSpecularParam[3] : packoffset(c0);
+
+}
+
+struct FF14Texture
+{
+  SamplerState S_s;
+  Texture2D<float4> T;
+};
+
+/*
+SamplerState g_SamplerViewPosition.S_s : register(s0);
+SamplerState g_SamplerGBuffer.S_s : register(s1);
+SamplerState g_SamplerShadow.S_s : register(s2);
+Texture2D<float4> g_SamplerViewPosition.T : register(t0);
+Texture2D<float4> g_SamplerGBuffer.T : register(t1);
+Texture2D<float4> g_SamplerShadow.T : register(t2);
+*/
+FF14Texture g_SamplerViewPosition;
+FF14Texture g_SamplerGBuffer;
+FF14Texture g_SamplerShadow;
+
+// 3Dmigoto declarations
+#define cmp -
+
+#include "Common.h"
+//#include "Arrow.h"
+
+// Not working
+//#include "ScreenSpaceShadow.h"
+
+float NormalShadows (float2 texcoord, float NdotL, float noise, float heightScale, float shadowHardness)
+{
+  // Normal mapping shadows
+  float2  uvddx = ddx(texcoord);
+  float2  uvddy = ddy(texcoord);
+
+  const float screenShadowSamples = 24.0;
+  const float hardness = heightScale * shadowHardness;
+  const float sampleStep = 1.0 / screenShadowSamples;
+
+  float2 newUV = texcoord;
+  newUV = newUV * g_CommonParameter.m_RenderTarget.xy + g_CommonParameter.m_RenderTarget.zw;
+  float3 pixelViewPos = g_SamplerViewPosition.T.Sample(g_SamplerViewPosition.S_s, newUV).xyz;
+  float pixelDepth = length(pixelViewPos);
+
+  float3 lightDirCS = mul(g_LightParam.m_Direction.xyz, (float3x3)g_LightParam.m_WorldViewProjectionMatrix).xyz;
+  float2 sampleDir = lightDirCS.xy * heightScale * float2(1.0, -1.0);
+  
+  /*
+  From the PDF:
+  Trace from hit point to light direction and compute sum of dot products
+  between normal map and light direction.
+  If slope is bigger than 0, pixel is shadowed. If slope is also bigger
+  than previous maximal value, increase hardness of shadow.
+  */
+
+  float thisSample = sampleStep - sampleStep * (noise);
+
+  // Skip on invalid faces
+  thisSample += (NdotL <= 0.0);
+
+  float result = 0;
+  float slope = -NdotL;
+  float maxslope = 0.0;
+  
+  while (thisSample <= 1.0)
+  {
+    // Where are we sampling?
+    float2 newUV = texcoord + sampleDir * thisSample;
+    newUV = newUV * g_CommonParameter.m_RenderTarget.xy + g_CommonParameter.m_RenderTarget.zw;
+
+    // Read the normal buffer
+    float3  localNormal = g_SamplerGBuffer.T.SampleGrad(g_SamplerGBuffer.S_s, newUV, uvddx, uvddy).xyz;
+    localNormal = normalize(-0.5 + localNormal);
+
+    // Calculate lighting
+    float localNdL = dot(g_LightParam.m_Direction.xyz, localNormal);
+
+    // Check against distance
+    float3 localView = g_SamplerViewPosition.T.SampleGrad(g_SamplerViewPosition.S_s, newUV, uvddx, uvddy).xyz;
+
+    float2 depthMinMax = saturate(1.0 - (pixelDepth - length(localView))
+      * float2(4.0, -6.0));
+    depthMinMax = depthMinMax.x * depthMinMax.y;
+
+    localNdL *= depthMinMax.x;
+
+    slope = slope - localNdL;
+    if (slope > maxslope)
+    {
+      result += hardness * (1.0-thisSample);
+    }
+    maxslope = max(maxslope, slope);
+    thisSample += sampleStep;
+  }
+
+  result = result * sampleStep;
+
+/*
+    float2 newUV = texcoord + sampleDir * (20*thisSample);
+    newUV = newUV * g_CommonParameter.m_RenderTarget.xy + g_CommonParameter.m_RenderTarget.zw;
+    float3  tmpNormal = g_SamplerGBuffer.T.Sample(g_SamplerGBuffer.S_s, newUV).xyzw;
+    tmpNormal = normalize(float3(-0.5,-0.5,-0.5) + tmpNormal);
+
+    float tmpLighting = dot(g_LightParam.m_Direction.xyz, tmpNormal);
+*/
+  return result;
+}
+
+
+void main(
+  float4 v0 : SV_POSITION0,
+  out float4 o0 : SV_TARGET0,
+  out float4 o1 : SV_TARGET1)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  r0.xy = v0.xy * g_CommonParameter.m_RenderTarget.xy + g_CommonParameter.m_RenderTarget.zw;
+  r1.xyz = g_SamplerViewPosition.T.Sample(g_SamplerViewPosition.S_s, r0.xy).xyz;
+  r0.z = dot(-r1.xyz, -r1.xyz);
+  r0.z = rsqrt(r0.z);
+  r1.xyw = -r1.xyz * r0.zzz;
+  r0.zw = g_LightParam.m_Attenuation.xy * r1.zz + g_LightParam.m_Attenuation.zz;
+  r2.xyzw = g_SamplerGBuffer.T.Sample(g_SamplerGBuffer.S_s, r0.xy).xyzw;
+  r0.xy = g_SamplerShadow.T.Sample(g_SamplerShadow.S_s, r0.xy).xy;
+  r0.xy = r0.xy * r0.xy;
+  r2.xyz = float3(-0.5,-0.5,-0.5) + r2.xyz;
+  r1.z = max(0.00200000009, r2.w);
+  r1.z = min(0.99000001, r1.z);
+  r1.z = log2(r1.z);
+  r1.z = -15 * r1.z;
+  r2.w = dot(r2.xyz, r2.xyz);
+  r2.w = rsqrt(r2.w);
+  r2.xyz = r2.xyz * r2.www;
+  r2.w = dot(-r1.xyw, r2.xyz);
+  r2.w = r2.w + r2.w;
+  r1.xyw = r2.xyz * -r2.www + -r1.xyw;
+  r2.x = saturate(dot(r2.xyz, g_LightParam.m_Direction.xyz)); // N dot L
+
+  const float _HeightScale = 64;
+  const float _ShadowHardness = 0.4;
+
+  // Add noise to sampling start
+  float  noise = r2_intensity(v0.xy) * 1.5;
+
+  float normalShadows = NormalShadows(v0.xy, r2.x, noise, _HeightScale, _ShadowHardness);
+  // Add to result of shadowmap
+  r0.xy = min(r0.xy, max(1-normalShadows, 0));
+
+  r2.z = saturate(dot(r1.xyw, g_LightParam.m_Direction.xyz)); // N dot H
+  r2.z = log2(r2.z);
+  r2.z = r2.z * r1.z;
+  r2.z = exp2(r2.z);
+  r2.w = 1 + -r2.x;
+  r2.w = r2.w * r2.w;
+  r2.w = r2.w * -3 + 3;
+  r2.w = min(1, r2.w);
+  r2.y = r2.z * r2.w;
+  r0.xy = r2.xy * r0.xy;
+  r2.xyz = g_LightParam.m_DiffuseColor.xyz * r0.xxx;
+  r3.xy = r0.zw * r0.zw;
+  r0.zw = r3.xy * r0.zw;
+  r0.zw = max(g_LightParam.m_Attenuation.ww, r0.zw);
+  r0.zw = min(float2(1,1), r0.zw);
+  o0.xyz = r0.zzz * r2.xyz;
+  o0.w = r0.x;
+  r0.x = saturate(dot(r1.xyw, g_FakeSpecularParam[1].m_Direction.xyzx));
+  r0.x = log2(r0.x);
+  r0.x = r1.z * r0.x;
+  r0.x = exp2(r0.x);
+  r2.xyz = g_FakeSpecularParam[1].m_Color.xyzx * r0.xxx;
+  r0.x = saturate(dot(r1.xyw, g_FakeSpecularParam[0].m_Direction.xyz));
+  r0.z = saturate(dot(r1.xyw, g_FakeSpecularParam[2].m_Direction.xyzx));
+  r0.z = log2(r0.z);
+  r0.z = r1.z * r0.z;
+  r0.z = exp2(r0.z);
+  r0.x = log2(r0.x);
+  r0.x = r1.z * r0.x;
+  r0.x = exp2(r0.x);
+  r1.xyz = g_FakeSpecularParam[0].m_Color.xyz * r0.xxx + r2.xyz;
+  r1.xyz = g_FakeSpecularParam[2].m_Color.xyzx * r0.zzz + r1.xyz;
+  r1.xyz = g_LightParam.m_SpecularColor.xyz * r0.yyy + r1.xyz;
+  o1.w = r0.y;
+  o1.xyz = r1.xyz * r0.www;/*
+  o0=0;
+  o1=0;
+  float2 fragCoord = v0.xy; 
+  float3 debug;
+  float te = screenSpaceContactShadow(fragCoord, g_LightParam.m_Direction.xyz,
+    32, 800.0, debug); 
+  o0 = float4(debug, 1);
+  o1 = float4(debug, 0);
+  */
+  return; 
+}
+
+/*
+void main_orig(
+  float4 v0 : SV_POSITION0,
+  out float4 o0 : SV_TARGET0,
+  out float4 o1 : SV_TARGET1)
+{
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  r0.xy = v0.xy * g_CommonParameter.m_RenderTarget.xy + g_CommonParameter.m_RenderTarget.zw;
+  r1.xyz = g_SamplerViewPosition.T.Sample(g_SamplerViewPosition.S_s, r0.xy).xyz;
+  r0.z = dot(-r1.xyz, -r1.xyz);
+  r0.z = rsqrt(r0.z);
+  r1.xyw = -r1.xyz * r0.zzz;
+  r0.zw = g_LightParam.m_Attenuation.xy * r1.zz + g_LightParam.m_Attenuation.zz;
+  r2.xyzw = g_SamplerGBuffer.T.Sample(g_SamplerGBuffer.S_s, r0.xy).xyzw;
+  r0.xy = g_SamplerShadow.T.Sample(g_SamplerShadow.S_s, r0.xy).xy;
+  r0.xy = r0.xy * r0.xy;
+  r2.xyz = float3(-0.5,-0.5,-0.5) + r2.xyz;
+  r1.z = max(0.00200000009, r2.w);
+  r1.z = min(0.99000001, r1.z);
+  r1.z = log2(r1.z);
+  r1.z = -15 * r1.z;
+  r2.w = dot(r2.xyz, r2.xyz);
+  r2.w = rsqrt(r2.w);
+  r2.xyz = r2.xyz * r2.www;
+  r2.w = dot(-r1.xyw, r2.xyz);
+  r2.w = r2.w + r2.w;
+  r1.xyw = r2.xyz * -r2.www + -r1.xyw;
+  r2.x = saturate(dot(r2.xyz, g_LightParam.m_Direction.xyz));
+  r2.z = saturate(dot(r1.xyw, g_LightParam.m_Direction.xyz));
+  r2.z = log2(r2.z);
+  r2.z = r2.z * r1.z;
+  r2.z = exp2(r2.z);
+  r2.w = 1 + -r2.x;
+  r2.w = r2.w * r2.w;
+  r2.w = r2.w * -3 + 3;
+  r2.w = min(1, r2.w);
+  r2.y = r2.z * r2.w;
+  r0.xy = r2.xy * r0.xy;
+  r2.xyz = g_LightParam.m_DiffuseColor.xyz * r0.xxx;
+  r3.xy = r0.zw * r0.zw;
+  r0.zw = r3.xy * r0.zw;
+  r0.zw = max(g_LightParam.m_Attenuation.ww, r0.zw);
+  r0.zw = min(float2(1,1), r0.zw);
+  o0.xyz = r0.zzz * r2.xyz;
+  o0.w = r0.x;
+  r0.x = saturate(dot(r1.xyw, cb2[2].xyzx));
+  r0.x = log2(r0.x);
+  r0.x = r1.z * r0.x;
+  r0.x = exp2(r0.x);
+  r2.xyz = cb2[3].xyzx * r0.xxx;
+  r0.x = saturate(dot(r1.xyw, g_FakeSpecularParam[0].m_Direction.xyz));
+  r0.z = saturate(dot(r1.xyw, cb2[4].xyzx));
+  r0.z = log2(r0.z);
+  r0.z = r1.z * r0.z;
+  r0.z = exp2(r0.z);
+  r0.x = log2(r0.x);
+  r0.x = r1.z * r0.x;
+  r0.x = exp2(r0.x);
+  r1.xyz = g_FakeSpecularParam[0].m_Color.xyz * r0.xxx + r2.xyz;
+  r1.xyz = cb2[5].xyzx * r0.zzz + r1.xyz;
+  r1.xyz = g_LightParam.m_SpecularColor.xyz * r0.yyy + r1.xyz;
+  o1.w = r0.y;
+  o1.xyz = r1.xyz * r0.www;
+  return;
+}
+*/
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// Generated by Microsoft (R) HLSL Shader Compiler 9.29.952.3111
+//
+//   using 3Dmigoto v1.3.11 on Sat Aug 21 05:22:44 2021
+//
+//
+// Buffer Definitions:
+//
+// cbuffer g_CommonParameter
+// {
+//
+//   struct CommonParameter
+//   {
+//
+//       float4 m_RenderTarget;         // Offset:    0
+//       float4 m_Viewport;             // Offset:   16
+//       float4 m_Misc;                 // Offset:   32
+//       float4 m_Misc2;                // Offset:   48
+//
+//   } g_CommonParameter;               // Offset:    0 Size:    64
+//
+// }
+//
+// cbuffer g_LightParam
+// {
+//
+//   struct LightParam
+//   {
+//
+//       float3 m_Position;             // Offset:    0
+//       float3 m_Direction;            // Offset:   16
+//       float3 m_DiffuseColor;         // Offset:   32
+//       float3 m_SpecularColor;        // Offset:   48
+//       float4 m_Attenuation;          // Offset:   64
+//       float4 m_ClipMin;              // Offset:   80
+//       float3 m_ClipMax;              // Offset:   96
+//       float3 m_FadeScale;            // Offset:  112
+//       float4 m_ShadowTexMask;        // Offset:  128
+//       float4 m_PlaneRayDirection;    // Offset:  144
+//       row_major float3x4 m_PlaneInversMatrix;// Offset:  160
+//       row_major float3x4 m_WorldViewInversMatrix;// Offset:  208
+//       row_major float4x4 m_LightMapMatrix;// Offset:  256
+//       row_major float4x4 m_WorldViewProjectionMatrix;// Offset:  320
+//       float4 m_HeightAttenuationPlane;// Offset:  384
+//       float4 m_HeightAttenuation;    // Offset:  400
+//
+//   } g_LightParam;                    // Offset:    0 Size:   416
+//
+// }
+//
+// cbuffer g_FakeSpecularParam
+// {
+//
+//   struct FakeSpecularParam
+//   {
+//
+//       float3 m_Direction;            // Offset:    0
+//       float4 m_Color;                // Offset:   16
+//
+//   } g_FakeSpecularParam[3];          // Offset:    0 Size:    96
+//
+// }
+//
+//
+// Resource Bindings:
+//
+// Name                                 Type  Format         Dim Slot Elements
+// ------------------------------ ---------- ------- ----------- ---- --------
+// g_SamplerViewPosition.S           sampler      NA          NA    0        1
+// g_SamplerGBuffer.S                sampler      NA          NA    1        1
+// g_SamplerShadow.S                 sampler      NA          NA    2        1
+// g_SamplerViewPosition.T           texture  float4          2d    0        1
+// g_SamplerGBuffer.T                texture  float4          2d    1        1
+// g_SamplerShadow.T                 texture  float4          2d    2        1
+// g_CommonParameter                 cbuffer      NA          NA    0        1
+// g_LightParam                      cbuffer      NA          NA    1        1
+// g_FakeSpecularParam               cbuffer      NA          NA    2        1
+//
+//
+//
+// Input signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_POSITION              0   xyzw        0      POS   float   xy
+//
+//
+// Output signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_TARGET                0   xyzw        0   TARGET   float   xyzw
+// SV_TARGET                1   xyzw        1   TARGET   float   xyzw
+//
+ps_5_0
+dcl_globalFlags refactoringAllowed
+dcl_constantbuffer cb0[1], immediateIndexed
+dcl_constantbuffer cb1[5], immediateIndexed
+dcl_constantbuffer cb2[6], immediateIndexed
+dcl_sampler s0, mode_default
+dcl_sampler s1, mode_default
+dcl_sampler s2, mode_default
+dcl_resource_texture2d (float,float,float,float) t0
+dcl_resource_texture2d (float,float,float,float) t1
+dcl_resource_texture2d (float,float,float,float) t2
+dcl_input_ps_siv linear noperspective v0.xy, position
+dcl_output o0.xyzw
+dcl_output o1.xyzw
+dcl_temps 4
+mad r0.xy, v0.xyxx, cb0[0].xyxx, cb0[0].zwzz
+sample_indexable(texture2d)(float,float,float,float) r1.xyz, r0.xyxx, t0.xyzw, s0
+dp3 r0.z, -r1.xyzx, -r1.xyzx
+rsq r0.z, r0.z
+mul r1.xyw, r0.zzzz, -r1.xyxz
+mad r0.zw, cb1[4].xxxy, r1.zzzz, cb1[4].zzzz
+sample_indexable(texture2d)(float,float,float,float) r2.xyzw, r0.xyxx, t1.xyzw, s1
+sample_indexable(texture2d)(float,float,float,float) r0.xy, r0.xyxx, t2.xyzw, s2
+mul r0.xy, r0.xyxx, r0.xyxx
+add r2.xyz, r2.xyzx, l(-0.500000, -0.500000, -0.500000, 0.000000)
+max r1.z, r2.w, l(0.002000)
+min r1.z, r1.z, l(0.990000)
+log r1.z, r1.z
+mul r1.z, r1.z, l(-15.000000)
+dp3 r2.w, r2.xyzx, r2.xyzx
+rsq r2.w, r2.w
+mul r2.xyz, r2.wwww, r2.xyzx
+dp3 r2.w, -r1.xywx, r2.xyzx
+add r2.w, r2.w, r2.w
+mad r1.xyw, r2.xyxz, -r2.wwww, -r1.xyxw
+dp3_sat r2.x, r2.xyzx, cb1[1].xyzx
+dp3_sat r2.z, r1.xywx, cb1[1].xyzx
+log r2.z, r2.z
+mul r2.z, r1.z, r2.z
+exp r2.z, r2.z
+add r2.w, -r2.x, l(1.000000)
+mul r2.w, r2.w, r2.w
+mad r2.w, r2.w, l(-3.000000), l(3.000000)
+min r2.w, r2.w, l(1.000000)
+mul r2.y, r2.w, r2.z
+mul r0.xy, r0.xyxx, r2.xyxx
+mul r2.xyz, r0.xxxx, cb1[2].xyzx
+mul r3.xy, r0.zwzz, r0.zwzz
+mul r0.zw, r0.zzzw, r3.xxxy
+max r0.zw, r0.zzzw, cb1[4].wwww
+min r0.zw, r0.zzzw, l(0.000000, 0.000000, 1.000000, 1.000000)
+mul o0.xyz, r2.xyzx, r0.zzzz
+mov o0.w, r0.x
+dp3_sat r0.x, r1.xywx, cb2[2].xyzx
+log r0.x, r0.x
+mul r0.x, r0.x, r1.z
+exp r0.x, r0.x
+mul r2.xyz, r0.xxxx, cb2[3].xyzx
+dp3_sat r0.x, r1.xywx, cb2[0].xyzx
+dp3_sat r0.z, r1.xywx, cb2[4].xyzx
+log r0.z, r0.z
+mul r0.z, r0.z, r1.z
+exp r0.z, r0.z
+log r0.x, r0.x
+mul r0.x, r0.x, r1.z
+exp r0.x, r0.x
+mad r1.xyz, cb2[1].xyzx, r0.xxxx, r2.xyzx
+mad r1.xyz, cb2[5].xyzx, r0.zzzz, r1.xyzx
+mad r1.xyz, cb1[3].xyzx, r0.yyyy, r1.xyzx
+mov o1.w, r0.y
+mul o1.xyz, r0.wwww, r1.xyzx
+ret
+// Approximately 57 instruction slots used
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/

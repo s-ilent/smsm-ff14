@@ -1,0 +1,355 @@
+// Second pass for bloom blur
+// ---- Created with 3Dmigoto v1.2.53
+
+struct texSampler {
+  SamplerState S_s;
+  Texture2D<float4> T;
+} sInput;
+
+//SamplerState sInput.S_s = register(s0);
+//Texture2D<float4> sInput.T : register(t0);
+
+
+// 3Dmigoto declarations
+#define cmp -
+
+void main( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0, // Offset
+  float4 v2 : TEXCOORD1, // Offset
+  float4 v3 : TEXCOORD2, // Offset
+  float4 v4 : TEXCOORD3, // Offset
+  float4 v5 : TEXCOORD4, // Offset
+  out float4 o0 : SV_TARGET0)
+{
+  const float icb[] =       { { 0.162102818  },
+                              { 0.120258562  },
+                              { 0.120258562  },
+                              { 0.120258562  },
+                              { 0.120258562  },
+                              { 0.0892157331 },
+                              { 0.0892157331 },
+                              { 0.0892157331 },
+                              { 0.0892157331 } };
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  float2 centre = (v2.xy);
+  float2 ulOffset = v3.xy - centre;
+  // v2: xy: none   zw: -
+  // v3: xy: -      zw : | 
+  // v4: xy: |      zw : \
+  // v4: xy: /      zw : /
+  //float2 drOffset = v4.xy - centre;
+  float2 drOffset = v4.zw - centre;
+  drOffset *= 4;
+
+  float2 offset = drOffset*float2(-1, 1);
+  r2 =  sInput.T.Sample(sInput.S_s, centre+offset).xyzw;
+  offset = drOffset*float2(1, 1);
+  r2 += sInput.T.Sample(sInput.S_s, centre+offset).xyzw;
+  offset = drOffset*float2(1, -1);
+  r2 += sInput.T.Sample(sInput.S_s, centre+offset).xyzw;
+  offset = drOffset*float2(-1, -1);
+  r2 += sInput.T.Sample(sInput.S_s, centre+offset).xyzw;
+  r2 *= 0.5;
+  o0 = r2;
+
+  return;
+}
+
+void main_gaussian( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0, // Offset down right a lot
+  float4 v2 : TEXCOORD1, //  center |  up right
+  float4 v3 : TEXCOORD2, // Offset up left | Offset up left more
+  float4 v4 : TEXCOORD3, // Offset down right more | Offset down right
+  out float4 o0 : SV_TARGET0)
+{
+  float weights[6];
+  float offsets[6];
+    
+  weights[0] = 0.13996576;
+  weights[1] = 0.24150955;
+  weights[2] = 0.13346580;
+  weights[3] = 0.04506637;
+  weights[4] = 0.00898062;
+  weights[5] = 0.00099478;
+  
+  offsets[0] = 0.00000000;
+  offsets[1] = 1.45454545;
+  offsets[2] = 3.39393939;
+  offsets[3] = 5.33333333;
+  offsets[4] = 7.27272727;
+  offsets[5] = 9.21212121;
+
+  float2 uv = v2.xy;
+  float2 pxSize = v4.xy-v2.xy;
+  pxSize *= 1;
+
+  float4 color = 0.0;
+  float weightSum = 0.0;
+
+  //color = sInput.T.Sample(sInput.S_s, centre).xyzw;
+
+  {
+      color += sInput.T.Sample(sInput.S_s, uv) * weights[0];
+      weightSum += weights[0];
+
+      for(int i = 1; i < 6; i++)
+      {
+          float2 offset = offsets[i] * pxSize;
+          color += sInput.T.Sample(sInput.S_s, uv + offset * float2(0.0, 0.5)) * weights[i];
+          color += sInput.T.Sample(sInput.S_s, uv - offset * float2(0.0, 0.5)) * weights[i];
+          //weightSum += weights[i] * 2.0;
+          weightSum += weights[i] * 1.0;
+      }
+
+      color /= weightSum;
+  }
+
+  o0 = color*1;
+}
+
+void main_old1( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0, // Offset
+  float4 v2 : TEXCOORD1, // Offset
+  float4 v3 : TEXCOORD2, // Offset
+  float4 v4 : TEXCOORD3, // Offset
+  float4 v5 : TEXCOORD4, // Offset
+  out float4 o0 : SV_TARGET0)
+{
+  const float4 icb[] =      { { 0.162102818, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0} };
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+/*
+  //float4 v[4] = { v0,v1,v2,v3 };
+  float4 v[4] = { v2,v3,v4,v5 };
+  r0.xyzw = float4(0,0,0,0);
+//  r1.x = 0;
+  int i = 0;
+  [loop]
+  for(i = 0; i < 4; i++) {
+//  while (true) {
+//    r1.y = cmp((int)r1.x >= 4);
+//    if (r1.y != 0) break;
+    int j = i << 1;
+    r2.xyzw = sInput.T.Sample(sInput.S_s, v[i].xy).xyzw;
+    r2.xyzw = icb[j+0].xxxx * r2.xyzw + r0.xyzw;
+    j = mad(i, 2, 1);
+    r3.xyzw = sInput.T.Sample(sInput.S_s, v[i].zw).xyzw;
+    r0.xyzw = icb[j+0].xxxx * r3.xyzw + r2.xyzw;
+//    r1.x = (int)r1.x + 1;
+  }
+  r1.xyzw = sInput.T.Sample(sInput.S_s, v1.xy).xyzw;
+  o0.xyzw = r1.xyzw + r0;
+  return;
+}
+*/
+
+  float2 centre = (v2.xy);
+  float2 ulOffset = v3.xy - centre;
+  // v2: xy: none   zw: -
+  // v3: xy: -      zw : | 
+  // v4: xy: |      zw : \
+  // v4: xy: /      zw : /
+  //float2 drOffset = v4.xy - centre;
+  float2 drOffset = v4.zw - centre;
+  drOffset *= 4;
+
+  r2 = sInput.T.Sample(sInput.S_s, centre).xyzw;
+  r3 = r2;
+  float s = 1;
+  // How does this make any sense? I'm sampling in two directions for a omnidirectional blur.
+  for (int x = 1; x <= 2; x++) {
+    float2 offset = drOffset*x;
+    float2 negaOffset = float2(offset.x, -offset.y);
+    r2 += sInput.T.Sample(sInput.S_s, centre - offset).xyzw;
+    r2 += sInput.T.Sample(sInput.S_s, centre + offset).xyzw;
+    r2 += sInput.T.Sample(sInput.S_s, centre - negaOffset).xyzw;
+    r2 += sInput.T.Sample(sInput.S_s, centre + negaOffset).xyzw;
+    //r2 /= 0.75;
+    r3 += r2;
+    s += 1;
+  }
+  r3 /= s*x;
+  o0 = r3;
+
+  return;
+}
+
+
+void main_fix( // Performs the same function as the original code, but the ASM is less optimised
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0,
+  float4 v2 : TEXCOORD1,
+  float4 v3 : TEXCOORD2,
+  float4 v4 : TEXCOORD3,
+  float4 v5 : TEXCOORD4,
+  out float4 o0 : SV_TARGET0)
+{
+  const float4 icb[] =      { { 0.162102818, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0} };
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  //float4 v[4] = { v0,v1,v2,v3 };
+  float4 v[4] = { v2,v3,v4,v5 };
+  r0.xyzw = float4(0,0,0,0);
+//  r1.x = 0;
+  int i = 0;
+  [loop]
+  for(i = 0; i < 4; i++) {
+//  while (true) {
+//    r1.y = cmp((int)r1.x >= 4);
+//    if (r1.y != 0) break;
+    int j = i << 1;
+    r2.xyzw = sInput.T.Sample(sInput.S_s, v[i].xy).xyzw;
+    r2.xyzw = icb[j+0].xxxx * r2.xyzw + r0.xyzw;
+    j = mad(i, 2, 1);
+    r3.xyzw = sInput.T.Sample(sInput.S_s, v[i].zw).xyzw;
+    r0.xyzw = icb[j+0].xxxx * r3.xyzw + r2.xyzw;
+//    r1.x = (int)r1.x + 1;
+  }
+  r1.xyzw = sInput.T.Sample(sInput.S_s, v1.xy).xyzw;
+  o0.xyzw = r1.xyzw * float4(0.0892157331,0.0892157331,0.0892157331,0.0892157331) + r0.xyzw;
+  return;
+}
+
+
+
+void orig( 
+  float4 v0 : SV_POSITION0,
+  float4 v1 : TEXCOORD0,
+  float4 v2 : TEXCOORD1,
+  float4 v3 : TEXCOORD2,
+  float4 v4 : TEXCOORD3,
+  float4 v5 : TEXCOORD4,
+  out float4 o0 : SV_TARGET0)
+{
+  const float4 icb[] = { { 0.162102818, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0} };
+  float4 r0,r1,r2,r3;
+  uint4 bitmask, uiDest;
+  float4 fDest;
+
+  float4 v[4] = { v0,v1,v2,v3 };
+  r0.xyzw = float4(0,0,0,0);
+  r1.x = 0;
+  while (true) {
+    r1.y = cmp((int)r1.x >= 4);
+    if (r1.y != 0) break;
+    r1.y = (uint)r1.x << 1;
+    r2.xyzw = sInput.T.Sample(sInput.S_s, v[r1.x+2].xy).xyzw;
+    r2.xyzw = icb[r1.y+0].xxxx * r2.xyzw + r0.xyzw;
+    r1.y = mad((int)r1.x, 2, 1);
+    r3.xyzw = sInput.T.Sample(sInput.S_s, v[r1.x+2].zw).xyzw;
+    r0.xyzw = icb[r1.y+0].xxxx * r3.xyzw + r2.xyzw;
+    r1.x = (int)r1.x + 1;
+  }
+  r1.xyzw = sInput.T.Sample(sInput.S_s, v1.xy).xyzw;
+  o0.xyzw = r1.xyzw * float4(0.0892157331,0.0892157331,0.0892157331,0.0892157331) + r0.xyzw;
+  return;
+}
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// Generated by Microsoft (R) HLSL Shader Compiler 9.29.952.3111
+//
+//   using 3Dmigoto v1.2.53 on Sat Apr 29 09:51:59 2017
+//
+//
+// Resource Bindings:
+//
+// Name                                 Type  Format         Dim Slot Elements
+// ------------------------------ ---------- ------- ----------- ---- --------
+// sInput.S                          sampler      NA          NA    0        1
+// sInput.T                          texture  float4          2d    0        1
+//
+//
+//
+// Input signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_POSITION              0   xyzw        0      POS   float       
+// TEXCOORD                 0   xy          1     NONE   float   xy  
+// TEXCOORD                 1   xyzw        2     NONE   float   xyzw
+// TEXCOORD                 2   xyzw        3     NONE   float   xyzw
+// TEXCOORD                 3   xyzw        4     NONE   float   xyzw
+// TEXCOORD                 4   xyzw        5     NONE   float   xyzw
+//
+//
+// Output signature:
+//
+// Name                 Index   Mask Register SysValue  Format   Used
+// -------------------- ----- ------ -------- -------- ------- ------
+// SV_TARGET                0   xyzw        0   TARGET   float   xyzw
+//
+ps_5_0
+dcl_globalFlags refactoringAllowed
+dcl_immediateConstantBuffer { { 0.162102818, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.120258562, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0},
+                              { 0.0892157331, 0, 0, 0} }
+dcl_sampler s0, mode_default
+dcl_resource_texture2d (float,float,float,float) t0
+dcl_input_ps linear v1.xy
+dcl_input_ps linear v2.xyzw
+dcl_input_ps linear v3.xyzw
+dcl_input_ps linear v4.xyzw
+dcl_input_ps linear v5.xyzw
+dcl_output o0.xyzw
+dcl_temps 4
+dcl_indexrange v2.xyzw 4
+mov r0.xyzw, l(0,0,0,0)
+mov r1.x, l(0)
+loop 
+  ige r1.y, r1.x, l(4)
+  breakc_nz r1.y
+  ishl r1.y, r1.x, l(1)
+  sample_indexable(texture2d)(float,float,float,float) r2.xyzw, v[r1.x + 2].xyxx, t0.xyzw, s0
+  mad r2.xyzw, icb[r1.y + 0].xxxx, r2.xyzw, r0.xyzw
+  imad r1.y, r1.x, l(2), l(1)
+  sample_indexable(texture2d)(float,float,float,float) r3.xyzw, v[r1.x + 2].zwzz, t0.xyzw, s0
+  mad r0.xyzw, icb[r1.y + 0].xxxx, r3.xyzw, r2.xyzw
+  iadd r1.x, r1.x, l(1)
+endloop 
+sample_indexable(texture2d)(float,float,float,float) r1.xyzw, v1.xyxx, t0.xyzw, s0
+mad o0.xyzw, r1.xyzw, l(0.0892157331, 0.0892157331, 0.0892157331, 0.0892157331), r0.xyzw
+ret 
+// Approximately 16 instruction slots used
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+ 
