@@ -19,14 +19,10 @@ Because this works through shader replacement, it has a low performance impact a
 * **Smoother radial blur** using dithered sampling, which avoids the stepped look of the original. 
 * **Less banding** with a dithered output, reducing the banding visible when looking at the skybox. 
 * **Bokeh depth of field** in cutscenes and /gpose mode. 
-<<<<<<< HEAD
-* **Screenspace shadows** based off surface normal maps, adding subtle shadows to objects based on the ridges on their surface.
-=======
+* **Screenspace shadows** based off surface normals, adding subtle shadows to objects based on the bumps on their surfaces.
 * **Not an overlay** - won't overlap the game's UI, won't render through it, won't have artifacts around UI elements. 
 
 ![See, UI works!](https://user-images.githubusercontent.com/16026653/129494753-8958c9af-2891-4785-aabd-eef6958c7c8d.jpg)
-
->>>>>>> origin/main
 
 ## Installation
 
